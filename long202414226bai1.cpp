@@ -1,26 +1,24 @@
-#include <iostream>
-using namespace std;
-void swap(int *a,int *b){
-    int t=*a;
-    *a=*b;
-    *b=t;
+#include<iostream>
+using namespace std ;
+void Partition(int A[], int dau, int cuoi){
+if (dau>=cuoi) return;
+int c=A[dau];
+int i=dau+1,j=cuoi;
+while (i<=j){
+while (A[i]<=c && i<=j) i++;
+while (A[j]>c && i<=j) j--;
+if (i<j) swap(A[i],A[j]);
 }
-void selectionSort(int A[], int n){
-    int i,j,min;
-    for(i=0;i<n-1;i++){
-        min= i;
-        for (j =i + 1; j < n; j++){
-            if (A[j] < A[min]){
-                min = j;
-        swap(&A[min], &A[i]);
-
-            }
-        }
-    }
+swap(A[dau],A[j]);
+Partition(A, dau,j-1);
+Partition(A, j+1,cuoi);
+}
+void QuickSort(int A[], int N){
+	Partition(A,0,N-1);
 }
 int main(){
    int A[9]={2,4,6,34,567,235,34,21};
-   selectionSort(A,8);
+   QuickSort(A,8);
    for(int i=0;i<8;i++){
     cout<<A[i]<<" ";
    }
