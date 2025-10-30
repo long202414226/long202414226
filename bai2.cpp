@@ -1,41 +1,32 @@
-#include <iostream>
+#include<iostream>
 using namespace std;
-
-int step = 1;
-
-void Partition(int A[], int dau, int cuoi) {
-    if (dau >= cuoi) return;
-
-    int c = A[dau];
-    int i = dau + 1, j = cuoi;
-
-    while (i <= j) {
-        while (i <= j && A[i] <= c) i++;
-        while (i <= j && A[j] > c) j--;
-        if (i < j) swap(A[i], A[j]);
+void MergeArrays(int A[],int dau,int giua,int cuoi){
+int i=dau,j=giua+1;
+while(i<j&&j<=cuoi){
+if(A[i]<=A[j])i++;
+else{
+int x=A[j];
+for(int k=j-1;k>=i;k--){
+A[k+1]=A[k];
+            }
+A[i]=x;
+i++;j++;
+        }
     }
-
-    swap(A[dau], A[j]);
-
-    // 🔹 In ra mảng sau mỗi lần chia
-    cout << "Bước " << step++ << " (pivot = " << c << "): ";
-    for (int k = 0; k <= cuoi; k++) cout << A[k] << " ";
-    cout << endl;
-
-    Partition(A, dau, j - 1);
-    Partition(A, j + 1, cuoi);
 }
-
-int main() {
-    int A[8] = {20, 90, 6, 33, 57, 235, 34, 1};
-
-    cout << "Mảng ban đầu: ";
-    for (int i = 0; i < 8; i++) cout << A[i] << " ";
-    cout << "\n\n";
-
-    Partition(A, 0, 7);
-
-    cout << "\nMảng sau khi sắp xếp: ";
-    for (int i = 0; i < 8; i++) cout << A[i] << " ";
-    cout << endl;
+void Split_Merg(int A[],int dau,int cuoi){
+if(dau>=cuoi)return;
+int giua=(dau+cuoi)/2;
+Split_Merg(A,dau,giua);
+Split_Merg(A,giua+1,cuoi);
+MergeArrays(A,dau,giua,cuoi);
+}
+void MergeSort(int A[],int N){
+if(N<2)return;
+Split_Merg(A,0,N-1);
+}
+int main(){
+int A[8]={20,90,6,33,57,235,34,1};
+MergeSort(A,8);
+for(int k=0;k<8;k++)cout<<A[k]<<" ";
 }
