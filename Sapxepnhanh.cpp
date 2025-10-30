@@ -1,6 +1,6 @@
 #include<iostream>
 using namespace std ;
-void Partition(int A[], int dau, int cuoi){
+void sapxepnhanh(int A[], int dau, int cuoi){
 int b=cuoi;
 if (dau>=cuoi) return;
 int c=A[dau];
@@ -15,10 +15,10 @@ for(int k=0;k<=7;k++) {
     }
     cout<<"\n";
 swap(A[dau],A[j]);
-Partition(A, dau,j-1);
-Partition(A, j+1,cuoi);
+sapxepnhanh(A, dau,j-1);
+sapxepnhanh(A, j+1,cuoi);
 }
 int main(){
    int A[9]={20,90,6,33,57,235,34,1};
-   Partition(A,0,7);
+   sapxepnhanh(A,0,7);
 }
