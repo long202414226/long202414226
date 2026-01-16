@@ -69,7 +69,7 @@ void duyetSau(Nut* goc) {
     if (goc == NULL) return;
     duyetSau(goc->trai);
     duyetSau(goc->phai);
-    cout << goc->dulieu << " ";
+    cout << goc->dulieu <<" ";
 }
 int main() {
     cout << "Cay tuan tu";
