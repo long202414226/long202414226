@@ -69,3 +69,35 @@ while true
     
     tong_mau_da_thu = tong_mau_da_thu + length(rx_frame);
 end
+function [co, idx, zf, prev_tail, max_env, do_tuong_dong] = co_xung_rt(y, b, a, zf, prev_tail, h_mf, noise_floor)
+    [y_filt, zf] = filter(b, a, y(:), zf);
+
+    buf = [prev_tail; y_filt];
+    N = length(h_mf);
+    prev_tail = y_filt(end - N + 2 : end);
+
+    c = conv(buf, h_mf, 'valid');
+    env = abs(hilbert(c));
+    [max_env, k] = max(env);
+
+    doan_xung = buf(k : k + N - 1);
+    nang_luong_thu = norm(doan_xung);
+    nang_luong_mau = norm(h_mf);
+    
+    if nang_luong_thu > 1e-6
+        do_tuong_dong = max_env / (nang_luong_thu * nang_luong_mau);
+    else
+        do_tuong_dong = 0;
+    end
+
+    nguong_bien_do = max(5 * noise_floor, 0.35);
+    nguong_hinh_dang = 0.55;
+
+    if (max_env > nguong_bien_do) && (do_tuong_dong > nguong_hinh_dang)
+        co = true;
+        idx = k;
+    else
+        co = false;
+        idx = -1;
+    end
+end
