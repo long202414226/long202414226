@@ -1,157 +1,124 @@
 clear; clc; close all;
 
-%% 1. Khai báo thông số tín hiệu Sync 4-QAM (khớp với Khối Phát)
-Fs = 48000;
-fc = 16500;                     % Tần số sóng mang 4-QAM: 16.5 kHz
-br = 700;                       % Tốc độ baud
-N_sps = round(Fs / br);         % Số mẫu trên mỗi symbol (69 mẫu)
-frameSize = 960;                % 20 ms mỗi khung
+fs = 48000;
+br = 700;                       % Tốc độ bit (700 bit/s)
+fc = 12400;                     % Tần số trung tâm: 12.4 kHz (f0 = 12000 Hz, f1 = 12800 Hz)
+df = 400;                       % Độ lệch tần FSK (±400 Hz)
+
+chunk_size = 960;               % Khung đọc thời gian thực (20 ms)
+max_record_sec = 30;            % Làm mới bộ đệm định kỳ tránh tràn RAM
+max_record_samples = max_record_sec * fs;
+t_echo_guard = 0.05;            % Nghỉ 50 ms sau khi phát lại tránh tự kích hoạt
 
 sync = [ ...
-1 1 1 1 1 1 1 1 0 1 1 1 0 0 0 1 0 0 1 1 1 0 1 0 0 1 0 1 1 0 0 1 ...
-1 1 1 1 0 1 0 0 0 0 1 0 0 1 0 0 0 1 1 0 1 0 1 1 1 0 1 1 1 1 0 0 ...
-1 0 0 0 0 1 0 1 1 1 0 1 1 0 1 0 1 0 0 0 1 1 1 0 0 0 0 1 1 1 0 1 ...
-1 1 0 0 0 1 0 1 0 0 1 1 1 1 1 0 0 1 0 0 1 0 1 1 0 0 0 0 1 0 1 1 ...
-1 0 1 0 1 1 0 1 0 0 0 1 1 1 0 0 0 0 1 1 0 1 1 0 1 1 0 0 0 1 0 1 ...
-0 0 1 1 1 1 1 1 0 1 1 0 0 1 0 0 0 0 1 1 1 0 1 1 0 1 0 0 0 1 1 0 ...
-1 0 1 0 1 1 0 0 1 1 1 0 0 1 0 0 1 0 1 1 0 0 0 0 1 1 0 1 0 1 0 1 ...
-0 1 0 0 1 1 0 1 1 1 0 0 0 1 1 0 1 1 0 0 1 1 0 0 ];
+1 1 1 1 1 1 1 0 1 0 1 0 1 0 0 1 1 0 0 1 1 1 0 1 1 1 0 1 0 0 1 0 ...
+1 1 0 0 0 1 1 0 1 1 1 1 0 1 1 0 1 0 1 1 0 1 1 0 0 1 0 0 1 0 0 0 ...
+1 1 1 0 0 0 0 1 0 1 1 1 1 1 0 0 1 0 1 0 1 1 1 0 0 1 1 0 1 0 0 0 ...
+1 0 0 1 1 1 1 0 0 0 1 0 1 0 0 0 0 1 1 0 0 0 0 0 1 0 0 0 0 0 0 ];
 
-sync_I = 2 * sync(1:2:end) - 1;
-sync_Q = 2 * sync(2:2:end) - 1;
-sym_sync = sync_I + 1i * sync_Q;
-baseband_I = kron(real(sym_sync), ones(1, N_sps));
-baseband_Q = kron(imag(sym_sync), ones(1, N_sps));
-t = (0 : length(baseband_I) - 1)' / Fs;
+N_bits = length(sync);
+L_frame = round((N_bits / br) * fs);            % Đúng 8709 mẫu (tránh lệch 54 mẫu do round(fs/br))
+t = (0 : L_frame - 1)' / fs;
 
-x_sync = baseband_I(:) .* cos(2*pi*fc*t) - baseband_Q(:) .* sin(2*pi*fc*t);
-x_sync = 0.8 * (x_sync / max(abs(x_sync)));
+bit_idx = min(floor(t * br) + 1, N_bits);
+bits_mau = sync(bit_idx)';
+f_inst = (fc - df) + (2 * df) * bits_mau;       % 12000 Hz (bit 0) và 12800 Hz (bit 1)
+frame_sig = sin(2 * pi * cumsum(f_inst) / fs);  % Liên tục pha khớp với file phát
 
-n_dt = length(x_sync);          % 8832 mẫu (~0.184 s, dài hơn frameSize = 960)
+h_mf = flipud(frame_sig);                       % Bộ lọc phối hợp
+norm_h = norm(h_mf);
 
-% Chia xung x_sync thành nhiều khung 960 mẫu để phát liên tục qua adw
-num_tx_frames = ceil(n_dt / frameSize);
-tx_padded = [x_sync; zeros(num_tx_frames * frameSize - n_dt, 1)];
-tx_frames = reshape(tx_padded, frameSize, num_tx_frames);
-frame_im_lang = zeros(frameSize, 1);
+% Bộ lọc thông dải bao trọn búp chính FSK: [11300 Hz - 13500 Hz]
+f_low  = fc - df - br;
+f_high = fc + df + br;
+[b, a] = butter(4, [f_low f_high] / (fs / 2), 'bandpass');
+zf_init = zeros(max(length(a), length(b)) - 1, 1);
 
-%% 2. Khởi tạo bộ lọc thông dải (15.1 - 17.9 kHz) và thiết bị thu - phát
-def = 1400;
-[b, a] = butter(4, [(fc - def) (fc + def)] / (Fs / 2), 'bandpass');
-zf = zeros(max(length(a), length(b)) - 1, 1);
-prev_tail = zeros(n_dt - 1, 1);
+r = audiorecorder(fs, 16, 1);
+player = audioplayer(0.9 * frame_sig, fs, 16);
+
 noise_floor = 0.02;
+nguong_hinh_dang = 0.25;        % Ngưỡng NCC thực tế cho kênh truyền qua loa - micro (0.25 - 0.35)
+nguong_bien_do_min = 0.30;      % Ngưỡng biên độ tối thiểu
 
-adw = audioDeviceWriter('SampleRate', Fs);
-adr = audioDeviceReader('SampleRate', Fs, 'SamplesPerFrame', frameSize);
+so_lan_phan_hoi = 0;
+fprintf('Khối thu FSK (12.0 - 12.8 kHz) đang lắng nghe thời gian thực...\n');
 
-% Làm ấm phần cứng
-adw(frame_im_lang);
-adr();
-
-fprintf('=== ĐANG THU REAL-TIME (SYNC 4-QAM 16.5 kHz): CÓ SYNC THÌ PHÁT PHẢN HỒI (Ctrl+C để dừng) ===\n\n');
-
-frame_count = 0;
-tx_idx = 0;                     % Bộ đếm phát các khung của xung x_sync (0 = đang không phát)
-bo_qua = 0;                     % Đếm khung nghỉ ngắn (0.1s) sau khi phát xong để chống tự kích hoạt
+record(r);
+cursor_doc = 0;
+zf = zf_init;
+prev_tail = zeros(L_frame - 1, 1);
 
 while true
-    frame_count = frame_count + 1;
-    rx_frame = adr();
-    
-    % 1. Nếu đang phát dở xung x_sync (10 khung) -> tiếp tục đẩy khung tiếp theo ra loa
-    if tx_idx > 0
-        adw(tx_frames(:, tx_idx));
-        tx_idx = tx_idx + 1;
-        if tx_idx > num_tx_frames
-            tx_idx = 0;         % Đã phát xong toàn bộ xung x_sync
-            bo_qua = 5;         % Nghỉ bắt xung thêm 5 khung (0.1s) cho tắt âm vang
-        end
-        [~, zf] = filter(b, a, rx_frame(:), zf);
-        continue;
-    end
-    
-    % 2. Nếu vừa phát xong -> bỏ qua 5 khung (0.1s) để không tự nghe lại chính mình
-    if bo_qua > 0
-        bo_qua = bo_qua - 1;
-        adw(frame_im_lang);
-        [~, zf] = filter(b, a, rx_frame(:), zf);
-        if bo_qua == 0
-            prev_tail = zeros(n_dt - 1, 1); % Xóa sạch đuôi âm thanh tự phát trước khi nghe lại
-        end
-        continue;
-    end
-    
-    % 3. Kiểm tra xem trong khung thu có xung Sync 4-QAM không
-    len_tail = length(prev_tail);
-    [co, idx, zf, prev_tail, max_val, ncc_val] = co_xung_rt( ...
-        rx_frame, b, a, zf, prev_tail, x_sync, noise_floor);
-    
-    if co
-        vi_tri_toan_cuc = (frame_count - 1) * frameSize - len_tail + idx;
-        thoi_diem_s = (vi_tri_toan_cuc - 1) / Fs;
-        fprintf('[CÓ SYNC 4-QAM] Đỉnh = %.3f | NCC = %.2f | Vị trí mẫu: %d (t = %.4f s) -> PHÁT PHẢN HỒI!\n', ...
-            max_val, ncc_val, vi_tri_toan_cuc, thoi_diem_s);
+    pause(0.01);
+
+    if (r.TotalSamples - cursor_doc) >= chunk_size
+        y_all = getaudiodata(r, 'double');
+        y_moi = y_all(cursor_doc + 1 : cursor_doc + chunk_size);
+        cursor_doc = cursor_doc + chunk_size;
+
+        [co, zf, prev_tail, max_env, ncc] = ...
+            phat_hien_xung_rt(y_moi, b, a, zf, prev_tail, h_mf, norm_h, ...
+                              noise_floor, nguong_bien_do_min, nguong_hinh_dang);
+
+        if co
+            so_lan_phan_hoi = so_lan_phan_hoi + 1;
+            fprintf('[Phản hồi #%d] BẮT ĐƯỢC XUNG (Đỉnh: %.2f | NCC: %.2f) -> Phát lại...\n', ...
+                so_lan_phan_hoi, max_env, ncc);
+
+            stop(r);
+            playblocking(player);
+            pause(t_echo_guard);
+
+            % Làm mới trạng thái trước khi thu tiếp
+            zf = zf_init;
+            prev_tail = zeros(L_frame - 1, 1);
+            cursor_doc = 0;
+            record(r);
+        else
+      
+             noise_floor = 0.95 * noise_floor + 0.05 * max_env;
         
-        adw(tx_frames(:, 1));   % Phát ngay khung đầu tiên của x_sync
-        tx_idx = 2;             % Các khung 2..10 sẽ tự động phát ở các vòng lặp kế tiếp
-    else
-        adw(frame_im_lang);     % Không có xung -> Phát im lặng
-        noise_floor = 0.95 * noise_floor + 0.05 * max_val;
+
+            if cursor_doc >= max_record_samples
+                stop(r);
+                zf = zf_init;
+                prev_tail = zeros(L_frame - 1, 1);
+                cursor_doc = 0;
+                record(r);
+            end
+        end
     end
 end
 
-%% 3. Các hàm xử lý tương quan (khớp logic với Khối Phát)
-function [co, idx, zf, prev_tail, max_val, do_tuong_dong] = co_xung_rt(y, b, a, zf, prev_tail, header, noise_floor)
+function [co, zf, prev_tail, max_env, do_tuong_dong] = ...
+    phat_hien_xung_rt(y, b, a, zf, prev_tail, h_mf, norm_h, ...
+                      noise_floor, nguong_bien_do_min, nguong_hinh_dang)
+
     [y_filt, zf] = filter(b, a, y(:), zf);
 
     buf = [prev_tail; y_filt];
-    N = length(header);
-    prev_tail = buf(end - N + 2 : end); % Cắt từ buf vì N (8832) > frameSize (960)
+    L = length(h_mf);
+    prev_tail = buf(end - L + 2 : end);
 
-    [k, max_val] = find_header_pos(buf, header);
+    c = conv(buf, h_mf, 'valid');
+    env = abs(hilbert(c));
+    [max_env, k] = max(env);
 
-    if k < 1 || (k + N - 1) > length(buf)
-        co = false;
-        idx = -1;
-        do_tuong_dong = 0;
-        return;
-    end
-
-    doan_xung = buf(k : k + N - 1);
+    doan_xung = buf(k : k + L - 1);
     nang_luong_thu = norm(doan_xung);
 
     if nang_luong_thu > 1e-6
-        do_tuong_dong = max_val / nang_luong_thu;
+        do_tuong_dong = max_env / (nang_luong_thu * norm_h);
     else
         do_tuong_dong = 0;
     end
 
-    nguong_bien_do = max(5 * noise_floor, 0.35);
-    nguong_hinh_dang = 0.35;
+    nguong_bien_do = max(5 * noise_floor, nguong_bien_do_min);
 
-    if (max_val > nguong_bien_do) && (do_tuong_dong > nguong_hinh_dang)
+    if (max_env > nguong_bien_do) && (do_tuong_dong > nguong_hinh_dang)
         co = true;
-        idx = k;
     else
         co = false;
-        idx = -1;
     end
-end
-
-function [idx, max_val] = find_header_pos(rx, header)
-    % Tìm vị trí bắt đầu header trong rx
-    rx     = rx(:);
-    header = header(:);
-
-    h = conj(flipud(header)) / norm(header);
-    y = filter(h, 1, rx);
-
-    % Xóa đoạn quá độ đầu bộ lọc để tránh idx < 1
-    y(1 : length(header) - 1) = 0;
-
-    [max_val, idx_peak] = max(abs(y));
-
-    % Quy đổi về vị trí bắt đầu header
-    idx = idx_peak - length(header) + 1;
 end
